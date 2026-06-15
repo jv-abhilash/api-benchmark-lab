@@ -1,0 +1,108 @@
+syntax = "proto3";
+
+package sensor;
+
+// ─────────────────────────────────────────────────────────────
+// SensorReading — the single payload used by all 7 protocols.
+// JSON/SOAP/WebSocket/GraphQL/Webhook carry this as JSON.
+// gRPC carries this as Protobuf binary (~35 bytes vs ~120 JSON).
+// ─────────────────────────────────────────────────────────────
+message SensorReading {
+  string sensor_id  = 1;   // e.g. "T-01"
+  float  temp       = 2;   // Celsius, e.g. 28.4
+  float  humidity   = 3;   // %, e.g. 62.1
+  double timestamp  = 4;   // Unix epoch float, e.g. 1718432100.4
+  int32  seq        = 5;   // sequence number — detects lost messages
+  string location   = 6;   // e.g. "lab-room-1"
+  SensorStatus status = 7; // enum — normal / warning / critical
+}
+
+// Status enum — lets us test enum serialisation across protocols
+enum SensorStatus {
+  NORMAL   = 0;
+  WARNING  = 1;
+  CRITICAL = 2;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Payload variants for Phase 3 (payload stress test)
+// Same fields, padded to hit 1KB / 10KB / 100KB / 1MB targets
+// ─────────────────────────────────────────────────────────────
+message SensorReadingPadded {
+  SensorReading reading = 1;  // the core reading
+  bytes         pad     = 2;  // random bytes to reach target size
+}
+
+// ─────────────────────────────────────────────────────────────
+// Request / response wrappers
+// ─────────────────────────────────────────────────────────────
+
+// Unary call: client asks for the latest reading from one sensor
+message SensorRequest {
+  string sensor_id = 1;
+}
+
+// Server-stream call: client subscribes to a stream of readings
+message StreamConfig {
+  string sensor_id       = 1;   // which sensor to stream
+  int32  interval_ms     = 2;   // push interval in milliseconds
+  int32  max_messages    = 3;   // 0 = stream forever
+  bool   padded          = 4;   // use SensorReadingPadded (Phase 3)
+  int32  pad_size_bytes  = 5;   // target payload size in bytes
+}
+
+// Client-stream call: client batches and uploads many readings
+message BatchAck {
+  int32  received = 1;   // how many the server accepted
+  int32  rejected = 2;   // how many failed validation
+  double duration_ms = 3; // server-side processing time
+}
+
+// Bidi call: control message client sends while server streams
+message StreamControl {
+  enum Command {
+    PAUSE  = 0;
+    RESUME = 1;
+    STOP   = 2;
+    PING   = 3;   // keepalive / latency probe
+  }
+  Command command    = 1;
+  int32   new_interval_ms = 2;  // used with RESUME to change rate
+}
+
+// Bidi call: server sends either a reading or a pong
+message StreamFrame {
+  oneof payload {
+    SensorReading reading = 1;
+    string        pong    = 2;  // response to PING control message
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// gRPC Service — all 4 call types implemented
+// ─────────────────────────────────────────────────────────────
+service SensorService {
+
+  // 1. Unary — like a REST GET
+  //    Client: "give me the latest reading for sensor T-01"
+  //    Server: returns one SensorReading and closes
+  rpc GetLatestReading (SensorRequest) returns (SensorReading);
+
+  // 2. Server streaming — live feed subscription
+  //    Client: "stream T-01 every 100ms until I say stop"
+  //    Server: pushes SensorReadings continuously
+  //    Benchmark use: Phase 1 baseline + Phase 2 throughput ramp
+  rpc StreamReadings (StreamConfig) returns (stream SensorReading);
+
+  // 3. Client streaming — batch upload
+  //    Client: sends a burst of readings (e.g. from offline period)
+  //    Server: validates and acks the batch as one response
+  //    Benchmark use: Phase 3 payload stress (large batches)
+  rpc BatchUpload (stream SensorReading) returns (BatchAck);
+
+  // 4. Bidirectional streaming — full duplex
+  //    Server streams readings while client sends control commands
+  //    Both sides transmit simultaneously on the same connection
+  //    Benchmark use: Phase 4 duplex flood
+  rpc BiDiSensor (stream StreamControl) returns (stream StreamFrame);
+}

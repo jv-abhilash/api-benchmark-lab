@@ -1,0 +1,110 @@
+version: "3.9"
+
+x-common: &common
+  restart: unless-stopped
+  networks:
+    - apibench
+  environment:
+    JWT_SECRET:     ${JWT_SECRET:-api-bench-secret}
+    GRPC_TOKEN:     ${GRPC_TOKEN:-api-bench-secret}
+    WEBHOOK_SECRET: ${WEBHOOK_SECRET:-webhook-hmac-secret}
+    SOAP_USER:      ${SOAP_USER:-benchmark}
+    SOAP_PASS:      ${SOAP_PASS:-api-bench-secret}
+
+services:
+
+  rest:
+    <<: *common
+    build:
+      context: ..
+      dockerfile: server/rest/Dockerfile
+    ports:
+      - "8001:8001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  soap:
+    <<: *common
+    build:
+      context: ..
+      dockerfile: server/soap/Dockerfile
+    ports:
+      - "8002:8002"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  websocket:
+    <<: *common
+    build:
+      context: ..
+      dockerfile: server/ws/Dockerfile
+    ports:
+      - "8003:8003"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  graphql:
+    <<: *common
+    build:
+      context: ..
+      dockerfile: server/graphql/Dockerfile
+    ports:
+      - "8004:8004"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8004/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  grpc:
+    <<: *common
+    build:
+      context: ..
+      dockerfile: server/grpc/Dockerfile
+    ports:
+      - "50051:50051"
+      - "8007:8007"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8007/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  webhook:
+    <<: *common
+    build:
+      context: ..
+      dockerfile: server/webhook/Dockerfile
+    ports:
+      - "8005:8005"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8005/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  webrtc:
+    <<: *common
+    build:
+      context: ..
+      dockerfile: server/webrtc/Dockerfile
+    ports:
+      - "8006:8006"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8006/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+networks:
+  apibench:
+    driver: bridge
