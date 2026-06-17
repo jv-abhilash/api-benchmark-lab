@@ -261,13 +261,11 @@ async def probe_webhook(server, duration, payload):
     async def handle(request):
         arrived_at = time.time()
         try:
-            body      = await request.json()
-            server_ts = body["data"]["timestamp"]
-            delay_ms  = (arrived_at - server_ts) * 1000
+            body = await request.json()
             deliveries.append({
-                "delay_ms" : delay_ms,
-                "sensor"   : body["data"]["sensor_id"],
-                "seq"      : body["data"]["seq"],
+                "arrived_at" : arrived_at,
+                "sensor"     : body["data"]["sensor_id"],
+                "seq"        : body["data"]["seq"],
             })
         except Exception:
             pass
@@ -298,12 +296,16 @@ async def probe_webhook(server, duration, payload):
     await runner.cleanup()
 
     print(f"  Webhook deliveries received : {len(deliveries)}")
-    if deliveries:
+    if len(deliveries) > 1:
+        gap = (deliveries[1]["arrived_at"] - deliveries[0]["arrived_at"]) * 1000
         print(f"  Sample: sensor={deliveries[0]['sensor']} "
               f"seq={deliveries[0]['seq']} "
-              f"delay={deliveries[0]['delay_ms']:.2f}ms")
+              f"inter-arrival={gap:.2f}ms")
 
-    rtts = [d["delay_ms"] for d in deliveries if d["delay_ms"] > 0]
+    arrivals = [d["arrived_at"] for d in deliveries]
+    rtts = [(arrivals[i] - arrivals[i-1]) * 1000
+            for i in range(1, len(arrivals))
+            if arrivals[i] > arrivals[i-1]]
     return rtts, errors
 
 # ── WebRTC — async websockets ─────────────────────────────────
@@ -389,7 +391,7 @@ def save_markdown(results, payload, duration, server, run_ts):
     os.makedirs(DOCS_DIR, exist_ok=True)
     from datetime import datetime
     dt       = datetime.fromtimestamp(run_ts).strftime("%Y-%m-%d %H:%M:%S")
-    filename = f"{DOCS_DIR}/latency_{payload}_{int(run_ts)}.md"
+    filename = f"{DOCS_DIR}/latency_{payload}.md"
 
     lines = []
     lines.append(f"# Latency Benchmark Results — {payload} payload, {duration}s run")
@@ -514,7 +516,10 @@ def save_markdown(results, payload, duration, server, run_ts):
                  f"The relative ordering of protocols is correct. "
                  f"Connect via Ethernet for numbers closer to predictions.")
 
-    open(filename, "w").write("\n".join(lines))
+    mode = "a" if os.path.exists(filename) else "w"
+    with open(filename, mode, encoding="utf-8") as f:
+        f.write("\n".join(lines))
+        f.write("\n\n---\n\n")
     print(f"Output saved → {filename}")
     return filename
 
@@ -560,7 +565,7 @@ async def main():
         "GraphQL"   : "full RTT, JSON + resolver overhead",
         "gRPC"      : "full RTT, Protobuf binary",
         "WebRTC"    : "ping-pong RTT, true B→A→B round trip",
-        "Webhook"   : "delivery latency only (push @5ms, not RTT)",
+        "Webhook"   : "inter-arrival @5ms push (not RTT)",
     }
 
     protocols = ["REST","SOAP","WebSocket","GraphQL",
