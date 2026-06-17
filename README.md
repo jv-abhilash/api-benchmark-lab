@@ -134,14 +134,14 @@ api-benchmark-lab/
 
 **Machine A (server)**
 ```bash
-git clone https://github.com/<your-handle>/api-benchmark-lab
+git clone https://github.com/jv-abhilash/api-benchmark-lab
 cd api-benchmark-lab/server
 docker compose up -d
 ```
 
 **Machine B (client)**
 ```bash
-git clone https://github.com/<your-handle>/api-benchmark-lab
+git clone https://github.com/jv-abhilash/api-benchmark-lab
 cd api-benchmark-lab/client
 SERVER_IP=192.168.68.59 docker compose up
 # Dashboard → http://localhost:3000
