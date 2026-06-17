@@ -139,7 +139,11 @@ async def ws_bidi(
                     interval = data.get("interval_ms", 100) / 1000.0
                     await websocket.send_json({"ack": "resumed"})
                 elif cmd == "ping":
-                    await websocket.send_json({"ack": "pong", "ts": time.time()})
+                    # echo client_ts back unchanged so client can measure true RTT
+                    # client sends: {"cmd": "ping", "client_ts": time.perf_counter()}
+                    # client RTT = time.perf_counter() - pong["client_ts"]
+                    client_ts = data.get("client_ts", time.time())
+                    await websocket.send_json({"ack": "pong", "client_ts": client_ts})
                 _counters["client_commands"] += 1
             except Exception:
                 break

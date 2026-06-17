@@ -202,7 +202,9 @@ async def simulated_datachannel(
             try:
                 data = await websocket.receive_json()
                 if data.get("cmd") == "ping":
-                    await websocket.send_json({"ack": "pong", "ts": time.time()})
+                    # echo client_ts back unchanged — client measures true RTT
+                    client_ts = data.get("client_ts", time.time())
+                    await websocket.send_json({"ack": "pong", "client_ts": client_ts})
                 _counters["datachannel_received"] += 1
             except Exception:
                 stop.set()

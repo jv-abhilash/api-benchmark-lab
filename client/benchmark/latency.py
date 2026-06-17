@@ -159,19 +159,36 @@ async def probe_soap(server, duration, payload):
 
 # ── WebSocket — async ─────────────────────────────────────────
 async def probe_websocket(server, duration, payload, token):
+    """
+    Ping-pong RTT measurement — true Machine B → Machine A → Machine B.
+    Client sends: {"cmd": "ping", "client_ts": time.perf_counter()}
+    Server echoes client_ts back unchanged.
+    RTT = time.perf_counter() - pong["client_ts"]
+    Same clock (Machine B) measures both ends — no clock skew.
+    """
     rtts, errors = [], 0
-    pad  = payload if payload != "64B" else "64B"
-    uri  = (f"ws://{server}:8003/ws/stream"
-            f"?token={token}&sensor_id=T-01"
-            f"&interval_ms=1&pad_size={pad}")
+    uri      = (f"ws://{server}:8003/ws/bidi"
+                f"?token={token}")
     deadline = time.time() + duration
     try:
         async with websockets.connect(uri) as ws:
             while time.time() < deadline:
-                t0  = time.perf_counter()
-                msg = await asyncio.wait_for(ws.recv(), timeout=5)
-                rtts.append((time.perf_counter() - t0) * 1000)
-                json.loads(msg)
+                ping_ts = time.perf_counter()
+                await ws.send(json.dumps({
+                    "cmd"       : "ping",
+                    "client_ts" : ping_ts
+                }))
+                # drain messages until we get our pong back
+                # bidi endpoint also pushes readings — skip those
+                while True:
+                    msg = json.loads(
+                        await asyncio.wait_for(ws.recv(), timeout=5))
+                    if msg.get("ack") == "pong" and "client_ts" in msg:
+                        rtt = (time.perf_counter() - msg["client_ts"]) * 1000
+                        rtts.append(rtt)
+                        break
+                    # skip server-pushed readings, keep looking for pong
+                await asyncio.sleep(0.001)
     except Exception:
         errors += 1
     return rtts, errors
@@ -291,17 +308,31 @@ async def probe_webhook(server, duration, payload):
 
 # ── WebRTC — async websockets ─────────────────────────────────
 async def probe_webrtc(server, duration, payload, token):
+    """
+    Ping-pong RTT measurement — true Machine B → Machine A → Machine B.
+    Same approach as WebSocket — client_ts echoed back unchanged.
+    """
     rtts, errors = [], 0
-    uri = (f"ws://{server}:8006/webrtc/datachannel/bench"
-           f"?token={token}&interval_ms=1")
+    uri      = (f"ws://{server}:8006/webrtc/datachannel/bench"
+                f"?token={token}&interval_ms=100")
     deadline = time.time() + duration
     try:
         async with websockets.connect(uri) as ws:
             while time.time() < deadline:
-                t0  = time.perf_counter()
-                msg = await asyncio.wait_for(ws.recv(), timeout=5)
-                rtts.append((time.perf_counter() - t0) * 1000)
-                json.loads(msg)
+                ping_ts = time.perf_counter()
+                await ws.send(json.dumps({
+                    "cmd"       : "ping",
+                    "client_ts" : ping_ts
+                }))
+                # drain until pong — datachannel also pushes readings
+                while True:
+                    msg = json.loads(
+                        await asyncio.wait_for(ws.recv(), timeout=5))
+                    if msg.get("ack") == "pong" and "client_ts" in msg:
+                        rtt = (time.perf_counter() - msg["client_ts"]) * 1000
+                        rtts.append(rtt)
+                        break
+                await asyncio.sleep(0.001)
     except Exception:
         errors += 1
     return rtts, errors
@@ -361,7 +392,7 @@ def save_markdown(results, payload, duration, server, run_ts):
     filename = f"{DOCS_DIR}/latency_{payload}_{int(run_ts)}.md"
 
     lines = []
-    lines.append(f"# Latency Benchmark Results")
+    lines.append(f"# Latency Benchmark Results — {payload} payload, {duration}s run")
     lines.append(f"")
     lines.append(f"## Test configuration")
     lines.append(f"")
@@ -525,10 +556,10 @@ async def main():
     notes = {
         "REST"      : "full RTT, JSON, per-request",
         "SOAP"      : "full RTT, XML 3.1x larger than JSON",
-        "WebSocket" : "buffer read time, server push @1ms",
+        "WebSocket" : "ping-pong RTT, true B→A→B round trip",
         "GraphQL"   : "full RTT, JSON + resolver overhead",
         "gRPC"      : "full RTT, Protobuf binary",
-        "WebRTC"    : "buffer read time, server push @1ms",
+        "WebRTC"    : "ping-pong RTT, true B→A→B round trip",
         "Webhook"   : "delivery latency only (push @5ms, not RTT)",
     }
 
