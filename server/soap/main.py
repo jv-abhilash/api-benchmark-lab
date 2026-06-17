@@ -1,8 +1,6 @@
 """
 server/soap/main.py
 SOAP service — port 8002
-Duplex:    Half  |  Stateless: Optional  |  Auth: WS-Security header
-Payload:   XML envelope — 3-10x larger than JSON (benchmark will show this)
 """
 import time, os, sys
 from collections import defaultdict
@@ -18,11 +16,9 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 NS_ENVELOPE = "http://schemas.xmlsoap.org/soap/envelope/"
 NS_WSSEC    = "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd"
 NS_SERVICE  = "http://api-benchmark-lab/sensor"
-NS_XSD      = "http://www.w3.org/2001/XMLSchema"
 
 VALID_USER  = os.getenv("SOAP_USER", "benchmark")
 VALID_PASS  = os.getenv("SOAP_PASS", "api-bench-secret")
-
 _counters   = defaultdict(int)
 _start_ts   = time.time()
 
@@ -63,8 +59,10 @@ def verify_wssec(tree: etree._Element) -> bool:
     password = token.findtext(f"{{{NS_WSSEC}}}Password", "")
     return username == VALID_USER and password == VALID_PASS
 
-# ── Fixed WSDL — xsd namespace added ─────────────────────────
-WSDL = """<?xml version="1.0" encoding="UTF-8"?>
+def get_wsdl(host: str) -> str:
+    """Generate WSDL dynamically using the request host so zeep
+    on any machine gets the correct service URL."""
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
 <definitions xmlns="http://schemas.xmlsoap.org/wsdl/"
              xmlns:soap="http://schemas.xmlsoap.org/wsdl/soap/"
              xmlns:tns="http://api-benchmark-lab/sensor"
@@ -154,7 +152,7 @@ WSDL = """<?xml version="1.0" encoding="UTF-8"?>
 
   <service name="SensorService">
     <port name="SensorPort" binding="tns:SensorBinding">
-      <soap:address location="http://localhost:8002/soap"/>
+      <soap:address location="http://{host}/soap"/>
     </port>
   </service>
 </definitions>"""
@@ -164,8 +162,10 @@ def health():
     return {"status": "ok", "service": "soap", "port": 8002}
 
 @app.get("/soap")
-def get_wsdl(wsdl: str = None):
-    return Response(content=WSDL, media_type="text/xml")
+def get_wsdl_endpoint(request: Request, wsdl: str = None):
+    """Return WSDL with dynamic host so any client gets correct URL."""
+    host = request.headers.get("host", "localhost:8002")
+    return Response(content=get_wsdl(host), media_type="text/xml")
 
 @app.get("/credentials")
 def get_credentials():
@@ -202,7 +202,7 @@ async def soap_endpoint(request: Request):
         return Response(content=soap_envelope(resp), media_type="text/xml")
     elif action == "GetBatchReadings":
         _counters["batch"] += 1
-        resp  = etree.Element(f"{{{NS_SERVICE}}}GetBatchReadingsResponse")
+        resp = etree.Element(f"{{{NS_SERVICE}}}GetBatchReadingsResponse")
         for r in reading_batch(size=100):
             resp.append(reading_to_xml(r))
         return Response(content=soap_envelope(resp), media_type="text/xml")
